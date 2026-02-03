@@ -1,0 +1,24 @@
+[Unit]
+Description=Telegram Bot for Odessa Eparchy
+After=network.target
+
+[Service]
+Type=simple
+User=opc
+Group=opc
+WorkingDirectory=/home/opc/telegram-bot
+Environment="PATH=/home/opc/telegram-bot/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="BOT_TOKEN=ваш_токен_здесь"
+ExecStart=/home/opc/telegram-bot/venv/bin/python3 /home/opc/telegram-bot/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=telegram-bot
+
+# Безопасность
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
