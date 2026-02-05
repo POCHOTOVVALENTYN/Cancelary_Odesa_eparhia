@@ -647,9 +647,24 @@ async def send_celebration_days_report(
                     f"<b>⛪ ЮБИЛЕЙ в священническом сане: {years_priest} лет</b>"
                 )
 
+            birth_line = ""
+            if kind == "bday":
+                birth_line = f"   📅 Дата рождения: {utils.format_date(p.birth_date)}\n"
+
+            ordinations_line = ""
+            if kind == "ord":
+                deacon_date_str = utils.format_date(p.deacon_ordination_date)
+                priest_date_str = utils.format_date(p.priest_ordination_date)
+                ordinations_line = (
+                    f"   ✝️ Дата хиротонии в диакона: {deacon_date_str}\n"
+                    f"   ⛪ Дата хиротонии в священника: {priest_date_str}\n"
+                )
+
             base_line = (
                 f"{idx}. {fio}\n"
                 f"   Сан: {p.status}\n"
+                f"{birth_line}"
+                f"{ordinations_line}"
                 f"   🎂 Возраст: {age_str}\n"
                 f"   📍 Место служения: {p.service_place or 'не указано'}\n"
                 f"   ✝️ Лет в диаконском сане: {deacon_str}\n"
