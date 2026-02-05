@@ -27,6 +27,7 @@ class Priest:
     education: str = ""
     secular_education: str = ""
     last_reward: str = ""
+    phone: str = ""  # Номер телефона
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -49,6 +50,7 @@ class Priest:
             "education": self.education,
             "secular_education": self.secular_education,
             "last_reward": self.last_reward,
+            "phone": self.phone,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -100,5 +102,8 @@ class Priest:
         
         if self.last_reward:
             lines.append(f"<b>Последняя награда:</b> {self.last_reward}")
+        
+        if self.phone:
+            lines.append(f"<b>📞 Телефон:</b> {self.phone}")
         
         return "\n".join(lines)

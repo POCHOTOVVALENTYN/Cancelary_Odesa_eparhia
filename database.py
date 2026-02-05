@@ -45,6 +45,7 @@ class Database:
                 education TEXT,
                 secular_education TEXT,
                 last_reward TEXT,
+                phone TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -61,6 +62,7 @@ class Database:
             ("deacon_ordination_date", "DATE"),
             ("priest_ordination_date", "DATE"),
             ("secular_education", "TEXT"),
+            ("phone", "TEXT"),
         ]
 
         for column_name, column_type in migrations:
@@ -93,9 +95,10 @@ class Database:
                 service_place,
                 education,
                 secular_education,
-                last_reward
+                last_reward,
+                phone
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             priest.name,
             priest.patronymic,
@@ -111,7 +114,8 @@ class Database:
             priest.service_place,
             priest.education,
             priest.secular_education,
-            priest.last_reward
+            priest.last_reward,
+            priest.phone
         ))
         
         priest_id = cursor.lastrowid
@@ -215,6 +219,7 @@ class Database:
                 education = ?,
                 secular_education = ?,
                 last_reward = ?,
+                phone = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         """, (
@@ -233,6 +238,7 @@ class Database:
             priest.education,
             priest.secular_education,
             priest.last_reward,
+            priest.phone,
             priest.id
         ))
         
@@ -306,6 +312,7 @@ class Database:
             education=row["education"] or "",
             secular_education=row["secular_education"] or "" if "secular_education" in row.keys() else "",
             last_reward=row["last_reward"] or "",
+            phone=row["phone"] or "" if "phone" in row.keys() else "",
             created_at=created_at,
             updated_at=updated_at
         )
