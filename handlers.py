@@ -402,6 +402,41 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_celebration_days_report(query, context, kind="ord", days_ahead=days_ahead)
         return
 
+    # Юбилеи по дням (рождение / хиротония)
+    if data == "bday_jub_days_menu":
+        await query.edit_message_text(
+            "🎊 Юбилеи дней рождения — выберите день:",
+            reply_markup=_build_days_menu("bday_jub", "bday_root"),
+        )
+        return
+    if data == "ord_jub_days_menu":
+        await query.edit_message_text(
+            "🏆 Юбилеи хиротонии — выберите день:",
+            reply_markup=_build_days_menu("ord_jub", "ord_root"),
+        )
+        return
+
+    if data.startswith("bday_jub_days_"):
+        days_ahead = int(data.split("_")[3])
+        await send_celebration_days_report(
+            query,
+            context,
+            kind="bday",
+            days_ahead=days_ahead,
+            jubilee_only=True,
+        )
+        return
+    if data.startswith("ord_jub_days_"):
+        days_ahead = int(data.split("_")[3])
+        await send_celebration_days_report(
+            query,
+            context,
+            kind="ord",
+            days_ahead=days_ahead,
+            jubilee_only=True,
+        )
+        return
+
     # Меню месяцев для разных типов
     if data == "bday_month_menu":
         await show_month_menu(query, kind="bday")
@@ -411,6 +446,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if data == "ord_month_menu":
         await show_month_menu(query, kind="ord")
+        return
+
+    # Юбилеи по месяцам (рождение / хиротония)
+    if data == "bday_jub_month_menu":
+        await show_month_menu_with_prefix(
+            query,
+            prefix="bday_jub",
+            back_callback="bday_root",
+            title="🏆 Юбилеи дней рождения — выберите месяц:",
+        )
+        return
+    if data == "ord_jub_month_menu":
+        await show_month_menu_with_prefix(
+            query,
+            prefix="ord_jub",
+            back_callback="ord_root",
+            title="🏆 Юбилеи хиротонии — выберите месяц:",
+        )
         return
 
     # Именинники по месяцам
@@ -425,6 +478,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("ord_month_"):
         month = int(data.split("_")[2])
         await send_celebration_month_report(query, context, kind="ord", month=month)
+        return
+
+    # Юбилеи по месяцам (callback)
+    if data.startswith("bday_jub_month_"):
+        month = int(data.split("_")[3])
+        await send_celebration_month_report(
+            query,
+            context,
+            kind="bday",
+            month=month,
+            jubilee_only=True,
+        )
+        return
+    if data.startswith("ord_jub_month_"):
+        month = int(data.split("_")[3])
+        await send_celebration_month_report(
+            query,
+            context,
+            kind="ord",
+            month=month,
+            jubilee_only=True,
+        )
 
 
 async def show_celebrations_root_menu(query_or_message):
@@ -460,6 +535,32 @@ async def show_celebrations_root_menu(query_or_message):
         await query_or_message.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
+def _build_days_menu(prefix: str, back_callback: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора дней (Сегодня, +1...+7)."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Сегодня", callback_data=f"{prefix}_days_0"),
+                InlineKeyboardButton("+1 день", callback_data=f"{prefix}_days_1"),
+                InlineKeyboardButton("+2 дня", callback_data=f"{prefix}_days_2"),
+            ],
+            [
+                InlineKeyboardButton("+3 дня", callback_data=f"{prefix}_days_3"),
+                InlineKeyboardButton("+4 дня", callback_data=f"{prefix}_days_4"),
+                InlineKeyboardButton("+5 дней", callback_data=f"{prefix}_days_5"),
+            ],
+            [
+                InlineKeyboardButton("+6 дней", callback_data=f"{prefix}_days_6"),
+                InlineKeyboardButton("+7 дней", callback_data=f"{prefix}_days_7"),
+            ],
+            [
+                InlineKeyboardButton("⬅️ Назад", callback_data=back_callback),
+                InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu"),
+            ],
+        ]
+    )
+
+
 def _build_type_menu_keyboard(kind: str) -> InlineKeyboardMarkup:
     """Клавиатура для подменю по конкретному типу дат."""
     prefix = {
@@ -467,6 +568,20 @@ def _build_type_menu_keyboard(kind: str) -> InlineKeyboardMarkup:
         "name": "name",
         "ord": "ord",
     }[kind]
+    extra_rows = []
+    if kind in ("bday", "ord"):
+        extra_rows = [
+            [
+                InlineKeyboardButton(
+                    "🎊 Юбилеи (по дням)",
+                    callback_data=f"{prefix}_jub_days_menu",
+                ),
+                InlineKeyboardButton(
+                    "🏆 Юбилеи (по месяцам)",
+                    callback_data=f"{prefix}_jub_month_menu",
+                ),
+            ]
+        ]
     return InlineKeyboardMarkup(
         [
             [
@@ -486,6 +601,7 @@ def _build_type_menu_keyboard(kind: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("📅 По месяцам", callback_data=f"{prefix}_month_menu"),
             ],
+            *extra_rows,
             [
                 InlineKeyboardButton("⬅️ Назад", callback_data="celebrations_root"),
                 InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu"),
@@ -549,8 +665,46 @@ async def show_month_menu(query, kind: str):
     )
 
 
+async def show_month_menu_with_prefix(query, prefix: str, back_callback: str, title: str):
+    """Показывает меню выбора месяца для заданного префикса callback."""
+    month_buttons = [
+        [
+            InlineKeyboardButton("Январь", callback_data=f"{prefix}_month_1"),
+            InlineKeyboardButton("Февраль", callback_data=f"{prefix}_month_2"),
+            InlineKeyboardButton("Март", callback_data=f"{prefix}_month_3"),
+        ],
+        [
+            InlineKeyboardButton("Апрель", callback_data=f"{prefix}_month_4"),
+            InlineKeyboardButton("Май", callback_data=f"{prefix}_month_5"),
+            InlineKeyboardButton("Июнь", callback_data=f"{prefix}_month_6"),
+        ],
+        [
+            InlineKeyboardButton("Июль", callback_data=f"{prefix}_month_7"),
+            InlineKeyboardButton("Август", callback_data=f"{prefix}_month_8"),
+            InlineKeyboardButton("Сентябрь", callback_data=f"{prefix}_month_9"),
+        ],
+        [
+            InlineKeyboardButton("Октябрь", callback_data=f"{prefix}_month_10"),
+            InlineKeyboardButton("Ноябрь", callback_data=f"{prefix}_month_11"),
+            InlineKeyboardButton("Декабрь", callback_data=f"{prefix}_month_12"),
+        ],
+        [
+            InlineKeyboardButton("⬅️ Назад", callback_data=back_callback),
+            InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu"),
+        ],
+    ]
+    await query.edit_message_text(
+        title,
+        reply_markup=InlineKeyboardMarkup(month_buttons),
+    )
+
+
 async def send_celebration_days_report(
-    query, context: ContextTypes.DEFAULT_TYPE, kind: str, days_ahead: int
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    kind: str,
+    days_ahead: int,
+    jubilee_only: bool = False,
 ):
     """Формирует отчёт об именинниках на указанный день для выбранного типа дат."""
     target_date = utils.get_target_date(days_ahead)
@@ -578,6 +732,21 @@ async def send_celebration_days_report(
 
     matches = [p for p in priests if match(p)]
 
+    if jubilee_only:
+        filtered = []
+        today = date.today()
+        for p in matches:
+            if kind == "bday":
+                age = utils.calculate_age(p.birth_date, today)
+                if utils.is_jubilee(age):
+                    filtered.append(p)
+            elif kind == "ord":
+                years_deacon = utils.years_since(p.deacon_ordination_date, today)
+                years_priest = utils.years_since(p.priest_ordination_date, today)
+                if utils.is_jubilee(years_deacon) or utils.is_jubilee(years_priest):
+                    filtered.append(p)
+        matches = filtered
+
     # Заголовки по типам
     headers = {
         "bday": "🎂 <b>Именинники по дате рождения на {date}</b>\n\n",
@@ -585,6 +754,8 @@ async def send_celebration_days_report(
         "ord": "✝️ <b>Именинники по дате хиротонии на {date}</b>\n\n",
     }
     header = headers[kind].format(date=target_date.strftime("%d.%m.%Y"))
+    if jubilee_only:
+        header = header.replace("Именинники", "Юбилеи")
 
     if not matches:
         await query.edit_message_text(
@@ -697,7 +868,11 @@ async def send_celebration_days_report(
 
 
 async def send_celebration_month_report(
-    query, context: ContextTypes.DEFAULT_TYPE, kind: str, month: int
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    kind: str,
+    month: int,
+    jubilee_only: bool = False,
 ):
     """Формирует отчёт об именинниках за указанный месяц для выбранного типа дат."""
     month_names = [
@@ -745,12 +920,29 @@ async def send_celebration_month_report(
 
     matches = [p for p in priests if match(p)]
 
+    if jubilee_only:
+        filtered = []
+        today = date.today()
+        for p in matches:
+            if kind == "bday":
+                age = utils.calculate_age(p.birth_date, today)
+                if utils.is_jubilee(age):
+                    filtered.append(p)
+            elif kind == "ord":
+                years_deacon = utils.years_since(p.deacon_ordination_date, today)
+                years_priest = utils.years_since(p.priest_ordination_date, today)
+                if utils.is_jubilee(years_deacon) or utils.is_jubilee(years_priest):
+                    filtered.append(p)
+        matches = filtered
+
     headers = {
         "bday": "🎂 <b>Именинники по дате рождения за {month} {year} года</b>\n\n",
         "name": "🎉 <b>Именинники по тезоименитству за {month} {year} года</b>\n\n",
         "ord": "✝️ <b>Именинники по дате хиротонии за {month} {year} года</b>\n\n",
     }
     header = headers[kind].format(month=month_name, year=year)
+    if jubilee_only:
+        header = header.replace("Именинники", "Юбилеи")
 
     if not matches:
         await query.edit_message_text(
