@@ -2,6 +2,7 @@
 Обработчики команд и сообщений для Telegram-бота
 """
 import asyncio
+import logging
 from datetime import datetime, date
 from telegram import (
     Update,
@@ -302,7 +303,10 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик callback-запросов от inline-кнопок"""
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Не удалось ответить на callback query (возможно устарел): {e}")
     user = query.from_user
     if not user or not utils.is_admin(user.id):
         # Для неадмина показываем алерт и игнорируем действие
@@ -1060,6 +1064,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик обычных текстовых сообщений"""
     text = update.message.text
     user = update.effective_user
+    
+    logging.getLogger(__name__).info(f"DEBUG: Входящее сообщение от {user.id if user else 'Unknown'}: {text[:50]}")
     
     # Если сообщение начинается с команды, игнорируем (команды обрабатываются отдельно)
     if text.startswith("/"):

@@ -18,6 +18,8 @@ class Database:
     def get_connection(self) -> sqlite3.Connection:
         """Получение соединения с базой данных"""
         conn = sqlite3.connect(self.db_path)
+        # Регистрируем функцию нижнего регистра для поиска на кириллице (SQLite LOWER не умеет в Unicode)
+        conn.create_function("py_lower", 1, str.lower)
         conn.row_factory = sqlite3.Row
         return conn
     
@@ -141,12 +143,12 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        search_term = f"%{query.lower()}%"
+        search_term = f"%{query.lower().strip()}%"
         cursor.execute("""
             SELECT * FROM priests 
-            WHERE LOWER(name) LIKE ?
-               OR LOWER(surname) LIKE ?
-               OR LOWER(surname || ' ' || name || ' ' || COALESCE(patronymic, '')) LIKE ?
+            WHERE py_lower(name) LIKE ?
+               OR py_lower(surname) LIKE ?
+               OR py_lower(surname || ' ' || name || ' ' || COALESCE(patronymic, '')) LIKE ?
             ORDER BY surname, name
         """, (search_term, search_term, search_term))
         
@@ -184,7 +186,7 @@ class Database:
         
         cursor.execute("""
             SELECT * FROM priests 
-            WHERE LOWER(status) = LOWER(?)
+            WHERE py_lower(status) = py_lower(?)
             ORDER BY surname, name
         """, (status,))
         
