@@ -21,12 +21,20 @@ if ! python -c "import telegram" 2>/dev/null; then
     pip install -r requirements.txt
 fi
 
+# Загрузка переменных окружения из .env (если файл есть)
+if [ -f ".env" ]; then
+    echo "🔑 Загрузка переменных из .env..."
+    set -a
+    source .env
+    set +a
+fi
+
 # Проверка токена
 if [ -z "$BOT_TOKEN" ]; then
-    echo "⚠️  ВНИМАНИЕ: Переменная окружения BOT_TOKEN не установлена!"
+    echo "❌ ОШИБКА: Переменная окружения BOT_TOKEN не установлена!"
     echo "   Установите её командой: export BOT_TOKEN='ваш_токен'"
-    echo "   Или отредактируйте config.py"
-    echo ""
+    echo "   Или создайте файл .env по образцу .env.example"
+    exit 1
 fi
 
 # Запуск бота

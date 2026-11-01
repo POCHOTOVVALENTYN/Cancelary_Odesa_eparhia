@@ -64,24 +64,23 @@ pip install -r requirements.txt
 
 ### Шаг 5: Настройка конфигурации
 
-Откройте файл `config.py` и выполните одно из следующих действий:
+Токен бота читается **только** из переменной окружения `BOT_TOKEN` — в `config.py` и в репозитории его нет. Если переменная не задана, бот не запустится и сообщит об этом.
 
-**Вариант 1: Установка через переменную окружения (рекомендуется)**
+**Вариант 1: файл `.env` (рекомендуется)**
 
-Установите переменную окружения:
+```bash
+cp .env.example .env
+chmod 600 .env
+# впишите токен в строку BOT_TOKEN=...
+```
+
+`start.sh` автоматически загружает `.env`. Файл `.env` указан в `.gitignore` — не коммитьте его.
+
+**Вариант 2: переменная окружения**
+
 ```bash
 export BOT_TOKEN="ваш_токен_здесь"
-```
-
-**Вариант 2: Прямое редактирование config.py**
-
-Откройте `config.py` и замените:
-```python
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-```
-на:
-```python
-BOT_TOKEN = os.getenv("BOT_TOKEN", "ваш_токен_здесь")
+python bot.py
 ```
 
 **Настройка администраторов:**
@@ -261,7 +260,8 @@ After=network.target
 Type=simple
 User=ваш_пользователь
 WorkingDirectory=/путь/к/Cancellary_Bot
-Environment="BOT_TOKEN=ваш_токен"
+# Файл с строкой BOT_TOKEN=... (chmod 600, не в git)
+EnvironmentFile=/путь/к/Cancellary_Bot/.env
 ExecStart=/usr/bin/python3 /путь/к/Cancellary_Bot/bot.py
 Restart=always
 
@@ -275,6 +275,12 @@ sudo systemctl daemon-reload
 sudo systemctl enable cancellary-bot
 sudo systemctl start cancellary-bot
 ```
+
+### Деплой через deploy.sh (Oracle Linux)
+
+`deploy.sh` копирует локальный `.env` на сервер в `/home/opc/telegram-bot/.env` (права 600) и прописывает `EnvironmentFile` в systemd-юнит. Если `.env` нет ни локально, ни на сервере, деплой остановится до запуска бота.
+
+SSH-ключ для деплоя хранится только локально в `keys/` (папка в `.gitignore`); путь можно переопределить: `SSH_KEY=/путь/к/ключу ./deploy.sh`.
 
 ### Использование screen/tmux
 

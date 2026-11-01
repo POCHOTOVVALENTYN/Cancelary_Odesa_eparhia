@@ -6,7 +6,8 @@
 
 set -e
 
-SSH_KEY="/Users/valentin/Cancellary_Bot/keys/ssh-key-2026-04-06.key"
+# Ключ лежит локально в keys/ (в git не хранится); можно переопределить: SSH_KEY=... ./deploy.sh
+SSH_KEY="${SSH_KEY:-/Users/valentin/Cancellary_Bot/keys/ssh-key-2026-04-06.key}"
 SERVER="opc@138.2.154.41"
 SSH_CMD="ssh -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=5 -i $SSH_KEY $SERVER"
 SCP_CMD="scp -o ConnectTimeout=30 -o ServerAliveInterval=60 -i $SSH_KEY"
@@ -59,6 +60,21 @@ fi
 echo "✅ Файлы скопированы"
 echo ""
 
+# Шаг 3.1: Токен бота (.env на сервере, права 600)
+echo "🔑 Шаг 3.1: Проверка токена бота..."
+if [ -f "$LOCAL_DIR/.env" ]; then
+    $SCP_CMD "$LOCAL_DIR/.env" "$SERVER:$REMOTE_DIR/.env"
+    echo "  ✅ .env скопирован с локальной машины"
+fi
+$SSH_CMD "chmod 600 $REMOTE_DIR/.env 2>/dev/null; grep -qE '^BOT_TOKEN=.+' $REMOTE_DIR/.env 2>/dev/null" || {
+    echo "❌ На сервере нет $REMOTE_DIR/.env с BOT_TOKEN!"
+    echo "   Создайте локально $LOCAL_DIR/.env по образцу .env.example и повторите деплой,"
+    echo "   или создайте файл на сервере вручную (BOT_TOKEN=..., chmod 600)."
+    exit 1
+}
+echo "✅ Токен на месте"
+echo ""
+
 # Шаг 4: Настройка Python окружения (БЕЗ dnf — экономим RAM!)
 echo "🐍 Шаг 4: Настройка Python окружения..."
 $SSH_CMD "cd $REMOTE_DIR && python3 -m venv venv && source venv/bin/activate && pip install --upgrade pip"
@@ -98,6 +114,7 @@ Type=simple
 User=opc
 Group=opc
 WorkingDirectory=/home/opc/telegram-bot
+EnvironmentFile=/home/opc/telegram-bot/.env
 ExecStart=/home/opc/telegram-bot/venv/bin/python3 /home/opc/telegram-bot/bot.py
 Restart=always
 RestartSec=10
@@ -122,7 +139,7 @@ echo ""
 
 # Шаг 8: Запуск бота
 echo "🤖 Шаг 8: Запуск бота..."
-$SSH_CMD "sudo systemctl daemon-reload && sudo systemctl enable telegram-bot && sudo systemctl start telegram-bot"
+$SSH_CMD "sudo systemctl daemon-reload && sudo systemctl enable telegram-bot && sudo systemctl restart telegram-bot"
 sleep 3
 echo "✅ Бот запущен"
 echo ""

@@ -14,8 +14,11 @@ ENV/
 *.sqlite
 *.sqlite3
 
-# Конфигурация
+# Конфигурация и секреты
 config_local.py
+.env
+keys/
+*.key
 
 # IDE
 .vscode/

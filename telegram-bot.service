@@ -8,7 +8,8 @@ User=opc
 Group=opc
 WorkingDirectory=/home/opc/telegram-bot
 Environment="PATH=/home/opc/telegram-bot/venv/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="BOT_TOKEN=ваш_токен_здесь"
+# Токен берётся из файла .env (строка BOT_TOKEN=...), права 600, в git не хранится
+EnvironmentFile=/home/opc/telegram-bot/.env
 ExecStart=/home/opc/telegram-bot/venv/bin/python3 /home/opc/telegram-bot/bot.py
 Restart=always
 RestartSec=10

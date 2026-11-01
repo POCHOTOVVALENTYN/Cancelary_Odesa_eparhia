@@ -23,14 +23,11 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Главная функция запуска бота"""
-    # Проверка токена
-    if config.BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        logger.error("ОШИБКА: Не установлен токен бота!")
-        logger.error("Пожалуйста, установите переменную окружения BOT_TOKEN или измените config.py")
-        return
+    # Проверка токена (падает с понятной ошибкой, если BOT_TOKEN не задан)
+    token = config.require_bot_token()
     
     # Создание приложения
-    application = Application.builder().token(config.BOT_TOKEN).build()
+    application = Application.builder().token(token).build()
     
     # Регистрация обработчиков команд
     application.add_handler(CommandHandler("start", handlers.start_command))
