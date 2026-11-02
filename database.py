@@ -53,6 +53,17 @@ _WRITE_FIELDS = [
     "bishop_ordination_date",
 ]
 
+# Колонки с датами (YYYY-MM-DD) для предварительного отбора «Именинников»
+_CELEBRATION_COLUMNS = {
+    "bday": ["birth_date"],
+    "ord": [
+        "tonsure_date",
+        "deacon_ordination_date",
+        "priest_ordination_date",
+        "bishop_ordination_date",
+    ],
+}
+
 
 class Database:
     """Класс для работы с базой данных SQLite"""
@@ -269,6 +280,41 @@ class Database:
             params += [limit, offset]
         cursor.execute(sql, params)
 
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [self._row_to_priest(row) for row in rows]
+
+    def get_celebration_candidates(
+        self, kind: str, month: int, day: Optional[int] = None
+    ) -> List[Priest]:
+        """
+        Предварительный отбор для «Именинников»: только те, у кого дата нужного
+        типа приходится на этот месяц (и день). Точную проверку делает вызывающий код,
+        поэтому отбор может быть шире, но не уже.
+        """
+        if kind == "name":
+            if day is None:
+                # name_day хранится как «ДД.ММ», иногда без ведущих нулей
+                cond = "(p.name_day LIKE ? OR p.name_day LIKE ?)"
+                params = [f"%.{month:02d}", f"%.{month}"]
+            else:
+                cond = "p.name_day = ?"
+                params = [f"{day:02d}.{month:02d}"]
+        elif kind in _CELEBRATION_COLUMNS:
+            columns = _CELEBRATION_COLUMNS[kind]
+            if day is None:
+                key, length = f"{month:02d}", 2
+            else:
+                key, length = f"{month:02d}-{day:02d}", 5
+            cond = "(" + " OR ".join(f"substr(p.{c}, 6, {length}) = ?" for c in columns) + ")"
+            params = [key] * len(columns)
+        else:
+            return []
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"{_SELECT_PRIESTS} WHERE {cond} ORDER BY p.surname, p.name", params)
         rows = cursor.fetchall()
         conn.close()
 
@@ -582,3 +628,14 @@ class Database:
             created_at=parse_ts("created_at"),
             updated_at=parse_ts("updated_at"),
         )
+
+
+_shared: Optional[Database] = None
+
+
+def get_db() -> Database:
+    """Общий экземпляр для бота: схема проверяется один раз при запуске, а не на каждый запрос"""
+    global _shared
+    if _shared is None:
+        _shared = Database()
+    return _shared

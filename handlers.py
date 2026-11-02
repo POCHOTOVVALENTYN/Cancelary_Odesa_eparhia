@@ -129,7 +129,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     query = " ".join(context.args)
-    db = database.Database()
+    db = database.get_db()
     priests = db.search_priests(query)
     
     if not priests:
@@ -165,7 +165,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or not utils.is_admin(user.id):
         await _handle_unauthorized_message(update, context)
         return
-    db = database.Database()
+    db = database.get_db()
     page = int(context.args[0]) if context.args and context.args[0].isdigit() else 0
     
     offset = page * config.ITEMS_PER_PAGE
@@ -250,7 +250,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    db = database.Database()
+    db = database.get_db()
     priests = db.get_priests_by_status(normalized_status)
     
     if not priests:
@@ -385,7 +385,7 @@ async def handle_monasteries_callback(query, context: ContextTypes.DEFAULT_TYPE,
       mon_cat_<key>                 — выбор монастыря в категории
       mon_list_<key>_<id>_<page>    — список людей (id=0 — все монастыри)
     """
-    db = database.Database()
+    db = database.get_db()
 
     if data == "mon_root":
         await query.edit_message_text(
@@ -509,7 +509,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Пагинация списка священников
     if data.startswith("list_"):
         page = int(data.split("_")[1])
-        db = database.Database()
+        db = database.get_db()
         offset = page * config.ITEMS_PER_PAGE
         priests = db.get_all_priests(
             limit=config.ITEMS_PER_PAGE, offset=offset, category=config.CATEGORY_WHITE_CLERGY
@@ -1002,8 +1002,8 @@ async def send_celebration_days_report(
     target_date = utils.get_target_date(days_ahead)
     target_ddmm = target_date.strftime("%d.%m")
 
-    db = database.Database()
-    priests = db.get_all_priests()
+    db = database.get_db()
+    priests = db.get_celebration_candidates(kind, target_date.month, target_date.day)
 
     def match(p: models.Priest) -> bool:
         if kind == "bday":
@@ -1120,8 +1120,8 @@ async def send_celebration_month_report(
     year = today.year
     month_name = month_names[month] if 1 <= month <= 12 else str(month)
 
-    db = database.Database()
-    priests = db.get_all_priests()
+    db = database.get_db()
+    priests = db.get_celebration_candidates(kind, month)
 
     def match(p: models.Priest) -> bool:
         if kind == "bday":
@@ -1205,7 +1205,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = update.effective_user
     
-    logging.getLogger(__name__).info(f"DEBUG: Входящее сообщение от {user.id if user else 'Unknown'}: {text[:50]}")
+    logging.getLogger(__name__).debug(f"Входящее сообщение от {user.id if user else 'Unknown'}: {text[:50]}")
     
     # Если сообщение начинается с команды, игнорируем (команды обрабатываются отдельно)
     if text.startswith("/"):
@@ -1269,7 +1269,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Простой поиск по любому другому тексту
-    db = database.Database()
+    db = database.get_db()
     priests = db.search_priests(text)
     
     if not priests:
