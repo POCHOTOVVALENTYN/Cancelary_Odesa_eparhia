@@ -56,7 +56,7 @@ echo ""
 echo "💾 Шаг 2: Резервная копия на сервере..."
 "${SSH[@]}" "set -e; mkdir -p $REMOTE_DIR/data /home/opc/backups
     B=/home/opc/backups/telegram-bot-\$(date +%Y%m%d-%H%M%S).tar.gz
-    tar czf \$B -C /home/opc --exclude=venv --exclude=__pycache__ telegram-bot
+    tar czf \$B -C /home/opc --exclude='venv*' --exclude=__pycache__ telegram-bot
     chmod 600 \$B; echo \"  ✅ \$B (\$(du -h \$B | cut -f1))\"
     ls -1t /home/opc/backups/telegram-bot-*.tar.gz | tail -n +6 | xargs -r rm -f"
 echo ""
