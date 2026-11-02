@@ -138,12 +138,16 @@ echo ""
 
 # Шаг 7: Перезапуск и проверка
 echo "🤖 Шаг 7: Перезапуск бота..."
-"${SSH[@]}" "sudo -n systemctl daemon-reload && sudo -n systemctl enable -q telegram-bot && sudo -n systemctl restart telegram-bot"
-# Ждём до 60 с строку «Application started» в журнале именно этого запуска
+# --no-block: на перегруженном сервере restart может висеть минутами вместе с ssh;
+# результат проверяем ниже по журналу
+OLD_ID="$("${SSH[@]}" "systemctl show -p InvocationID --value telegram-bot")"
+"${SSH[@]}" "sudo -n systemctl daemon-reload && sudo -n systemctl enable -q telegram-bot && sudo -n systemctl restart --no-block telegram-bot"
+# Ждём до 3 мин строку «Application started» в журнале именно нового запуска
 # ("active" в systemd значит лишь, что процесс жив, а не что бот подключился)
-STARTED="$("${SSH[@]}" "for i in \$(seq 30); do
+STARTED="$("${SSH[@]}" "for i in \$(seq 90); do
         ID=\$(systemctl show -p InvocationID --value telegram-bot)
-        sudo -n journalctl _SYSTEMD_INVOCATION_ID=\$ID -o cat | grep -q 'Application started' && { echo yes; exit; }
+        [ -n \"\$ID\" ] && [ \"\$ID\" != '$OLD_ID' ] \
+            && sudo -n journalctl _SYSTEMD_INVOCATION_ID=\$ID -o cat | grep -q 'Application started' && { echo yes; exit; }
         sleep 2
     done; echo no")"
 STATE="$("${SSH[@]}" "systemctl is-active telegram-bot" || true)"
