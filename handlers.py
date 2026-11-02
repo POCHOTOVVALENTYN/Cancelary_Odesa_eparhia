@@ -342,29 +342,40 @@ _MONASTERY_DATE_LABELS = [
 ]
 
 
+def _monastery_person_dates(p: models.Priest) -> str:
+    """Даты для поздравлений — только те, что известны."""
+    line = ""
+    if p.name_day:
+        line += f"\n    📅 День тезоименитства: {p.name_day}"
+    for field_name, label in _MONASTERY_DATE_LABELS:
+        d = getattr(p, field_name)
+        if d:
+            line += f"\n    {label}: {utils.format_date(d)}"
+    return line
+
+
 def _monastery_person_line(index: int, p: models.Priest) -> str:
     """Короткая строка о человеке в списке монастыря."""
+    if p.birth_date:
+        born = f", род. {utils.format_date(p.birth_date)}"
+    elif p.birth_year:
+        born = f", {p.birth_year} г.р."
+    else:
+        born = ""
     if p.is_monastic:
         line = f"{index}. {p.short_title()}"
         if p.is_vicegerent:
             line += " — наместник"
-        if p.birth_year:
-            line += f", {p.birth_year} г.р."
+        line += born
         if p.obedience:
             line += f"\n    <i>{p.obedience}</i>"
-        # полные даты известны только у архиереев (data/vicar_dates.csv)
-        if p.name_day:
-            line += f"\n    📅 День тезоименитства: {p.name_day}"
-        for field_name, label in _MONASTERY_DATE_LABELS:
-            d = getattr(p, field_name)
-            if d:
-                line += f"\n    {label}: {utils.format_date(d)}"
-        return line
+        # у насельников из списков монастырей только годы; полные даты — из data/*_dates.csv
+        return line + _monastery_person_dates(p)
     fio = " ".join(part for part in [p.surname, p.name, p.patronymic] if part)
-    line = f"{index}. {p.status} {fio}"
+    line = f"{index}. {p.status} {fio}{born}"
     if p.phone:
         line += f"\n    📞 {p.phone}"
-    return line
+    return line + _monastery_person_dates(p)
 
 
 async def handle_monasteries_callback(query, context: ContextTypes.DEFAULT_TYPE, data: str):

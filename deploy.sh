@@ -36,9 +36,9 @@ FILES=(
     add_sample_data.py check_diakons.py import_diakons.py
     import_phones_from_kliriki.py offline_import_legacy.py
     reset_and_import_legacy.py test_kliriki_read.py
-    monastery_importer.py import_monasteries.py import_vicar_dates.py
+    monastery_importer.py import_monasteries.py import_vicar_dates.py import_clergy_dates.py
     requirements.txt start.sh
-    data/diakons.xlsx data/kliriki.xlsx data/priests_odess.xlsx data/vicar_dates.csv
+    data/diakons.xlsx data/kliriki.xlsx data/priests_odess.xlsx data/vicar_dates.csv data/clergy_dates.csv
     ИНСТРУКЦИЯ_МОНАСТЫРИ.md
 )
 
