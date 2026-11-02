@@ -29,16 +29,13 @@ DROPIN="$DROPIN_DIR/env.conf"
 SET_TOKEN=0
 [ "${1:-}" = "--set-token" ] && SET_TOKEN=1
 
+# Только бот и CSV-скрипты дат: импорт из Excel/Word (pandas, openpyxl, docx)
+# выполняется на Mac, на сервере эти библиотеки занимали ~150 МБ venv
 FILES=(
     bot.py handlers.py database.py config.py models.py utils.py
-    excel_importer.py excel_template.py kliriki_parser.py
-    convert_word_to_excel.py legacy_excel_importer.py
-    add_sample_data.py check_diakons.py import_diakons.py
-    import_phones_from_kliriki.py offline_import_legacy.py
-    reset_and_import_legacy.py test_kliriki_read.py
-    monastery_importer.py import_monasteries.py import_vicar_dates.py import_clergy_dates.py
-    requirements.txt start.sh
-    data/diakons.xlsx data/kliriki.xlsx data/priests_odess.xlsx data/vicar_dates.csv data/clergy_dates.csv
+    check_diakons.py import_vicar_dates.py import_clergy_dates.py
+    requirements-server.txt
+    data/vicar_dates.csv data/clergy_dates.csv
     ИНСТРУКЦИЯ_МОНАСТЫРИ.md
 )
 
@@ -60,7 +57,8 @@ echo "💾 Шаг 2: Резервная копия на сервере..."
 "${SSH[@]}" "set -e; mkdir -p $REMOTE_DIR/data /home/opc/backups
     B=/home/opc/backups/telegram-bot-\$(date +%Y%m%d-%H%M%S).tar.gz
     tar czf \$B -C /home/opc --exclude=venv --exclude=__pycache__ telegram-bot
-    chmod 600 \$B; echo \"  ✅ \$B (\$(du -h \$B | cut -f1))\""
+    chmod 600 \$B; echo \"  ✅ \$B (\$(du -h \$B | cut -f1))\"
+    ls -1t /home/opc/backups/telegram-bot-*.tar.gz | tail -n +6 | xargs -r rm -f"
 echo ""
 
 # Шаг 3: Загрузка файлов (без venv, __pycache__, .git, keys и database.db)
@@ -94,12 +92,12 @@ echo ""
 # Шаг 5: Python окружение и зависимости (по одной, чтобы не перегрузить RAM)
 echo "🐍 Шаг 5: Python окружение и зависимости..."
 "${SSH[@]}" "cd $REMOTE_DIR && { [ -d venv ] || python3 -m venv venv; }"
-for pkg in $(grep -vE '^\s*(#|$)' requirements.txt); do
+for pkg in $(grep -vE '^\s*(#|$)' requirements-server.txt); do
     "${SSH[@]}" "cd $REMOTE_DIR && venv/bin/pip install -q '$pkg' >> deploy.log 2>&1 \
         || { echo '❌ $pkg — см. $REMOTE_DIR/deploy.log'; exit 1; }"
     echo "  ✅ $pkg"
 done
-"${SSH[@]}" "cd $REMOTE_DIR && venv/bin/python3 -c 'import telegram, openpyxl, pandas, docx, config, database, handlers, monastery_importer' && echo '  ✅ Все импорты проходят'"
+"${SSH[@]}" "cd $REMOTE_DIR && venv/bin/python3 -c 'import telegram, config, database, handlers, import_clergy_dates, import_vicar_dates' && echo '  ✅ Все импорты проходят'"
 echo ""
 
 # Шаг 6: systemd сервис
