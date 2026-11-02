@@ -121,9 +121,15 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=telegram-bot
 
-# Ограничения ресурсов для micro VM
-MemoryMax=400M
-MemoryHigh=300M
+# Ограничения ресурсов для micro VM (503 МБ ОЗУ): пик бота ~32 МБ.
+# Выше MemoryHigh ядро ужимает процесс, при MemoryMax убивает его, и Restart
+# поднимает заново — хост с SSH при этом остаётся живым
+MemoryHigh=96M
+MemoryMax=128M
+# При общей нехватке памяти ядро сначала выберет не бота
+OOMScoreAdjust=-300
+# glibc по умолчанию заводит арены памяти на каждый поток — для бота это лишнее
+Environment=MALLOC_ARENA_MAX=2
 
 # Безопасность
 NoNewPrivileges=true
