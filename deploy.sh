@@ -91,7 +91,8 @@ echo ""
 
 # Шаг 5: Python окружение и зависимости (по одной, чтобы не перегрузить RAM)
 echo "🐍 Шаг 5: Python окружение и зависимости..."
-"${SSH[@]}" "cd $REMOTE_DIR && { [ -d venv ] || python3 -m venv venv; }"
+# SELinux: systemd запускает только файлы с меткой bin_t, а новый venv в /home получает user_home_t
+"${SSH[@]}" "cd $REMOTE_DIR && { [ -d venv ] || python3 -m venv venv; } && sudo -n chcon -R -t bin_t venv/bin"
 for pkg in $(grep -vE '^\s*(#|$)' requirements-server.txt); do
     "${SSH[@]}" "cd $REMOTE_DIR && venv/bin/pip install -q '$pkg' >> deploy.log 2>&1 \
         || { echo '❌ $pkg — см. $REMOTE_DIR/deploy.log'; exit 1; }"
