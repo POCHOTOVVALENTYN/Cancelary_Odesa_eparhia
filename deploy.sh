@@ -2,92 +2,109 @@
 # ============================================
 # Скрипт деплоя бота Канцелярии ОЕУ ОЕ
 # Для Oracle Linux 9 (micro VM, 1GB RAM)
+#
+#   ./deploy.sh              — обновить код и перезапустить бота
+#   ./deploy.sh --set-token  — дополнительно записать токен из BOT_TOKEN / .env
+#
+# База данных на сервере — боевая, скрипт её НЕ перезаписывает.
+# Перед каждым деплоем на сервере делается резервная копия (~/backups).
+#
+# Особенность сервера: ответы сервер → Mac длиннее ~1.4 КБ зависают
+# (scp-скачивание, длинный вывод). Поэтому файлы только загружаются
+# (tar через ssh), а удалённые команды печатают короткие строки;
+# подробный вывод pip пишется в $REMOTE_DIR/deploy.log.
 # ============================================
 
-set -e
+set -euo pipefail
 
-SSH_KEY="/Users/valentin/Cancellary_Bot/keys/ssh-key-2026-04-06.key"
+SSH_KEY="${SSH_KEY:-/Users/valentin/Cancellary_Bot/keys/ssh-key-2026-04-06.key}"
 SERVER="opc@138.2.154.41"
-SSH_CMD="ssh -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=5 -i $SSH_KEY $SERVER"
-SCP_CMD="scp -o ConnectTimeout=30 -o ServerAliveInterval=60 -i $SSH_KEY"
 REMOTE_DIR="/home/opc/telegram-bot"
-LOCAL_DIR="/Users/valentin/Cancellary_Bot"
+LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
+SSH=(ssh -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=5 -o BatchMode=yes -i "$SSH_KEY" "$SERVER")
+# Токен хранится в drop-in systemd: SELinux не даёт systemd читать EnvironmentFile из /home
+DROPIN_DIR="/etc/systemd/system/telegram-bot.service.d"
+DROPIN="$DROPIN_DIR/env.conf"
+
+SET_TOKEN=0
+[ "${1:-}" = "--set-token" ] && SET_TOKEN=1
+
+FILES=(
+    bot.py handlers.py database.py config.py models.py utils.py
+    excel_importer.py excel_template.py kliriki_parser.py
+    convert_word_to_excel.py legacy_excel_importer.py
+    add_sample_data.py check_diakons.py import_diakons.py
+    import_phones_from_kliriki.py offline_import_legacy.py
+    reset_and_import_legacy.py test_kliriki_read.py
+    monastery_importer.py import_monasteries.py import_vicar_dates.py
+    requirements.txt start.sh
+    data/diakons.xlsx data/kliriki.xlsx data/priests_odess.xlsx data/vicar_dates.csv
+    ИНСТРУКЦИЯ_МОНАСТЫРИ.md
+)
 
 echo "🚀 === ДЕПЛОЙ БОТА КАНЦЕЛЯРИИ ОЕУ ОЕ ==="
 echo ""
 
-# Шаг 1: Проверка подключения
-echo "📡 Шаг 1: Проверка SSH подключения..."
-$SSH_CMD "echo 'SSH OK'; hostname" || { echo "❌ Не удалось подключиться к серверу!"; exit 1; }
+# Шаг 1: Проверка файлов и подключения
+echo "📡 Шаг 1: Проверка файлов и SSH подключения..."
+cd "$LOCAL_DIR"
+for f in "${FILES[@]}"; do
+    [ -f "$f" ] || { echo "❌ Нет файла: $f"; exit 1; }
+done
+"${SSH[@]}" "echo 'SSH OK'; hostname" || { echo "❌ Не удалось подключиться к серверу!"; exit 1; }
 echo "✅ Подключение успешно"
 echo ""
 
-# Шаг 2: Создание директории
-echo "📁 Шаг 2: Создание рабочей директории..."
-$SSH_CMD "mkdir -p $REMOTE_DIR/data"
-echo "✅ Директория создана"
+# Шаг 2: Резервная копия кода и базы на сервере
+echo "💾 Шаг 2: Резервная копия на сервере..."
+"${SSH[@]}" "set -e; mkdir -p $REMOTE_DIR/data /home/opc/backups
+    B=/home/opc/backups/telegram-bot-\$(date +%Y%m%d-%H%M%S).tar.gz
+    tar czf \$B -C /home/opc --exclude=venv --exclude=__pycache__ telegram-bot
+    chmod 600 \$B; echo \"  ✅ \$B (\$(du -h \$B | cut -f1))\""
 echo ""
 
-# Шаг 3: Копирование файлов (без venv, __pycache__, .git, keys)
-echo "📦 Шаг 3: Копирование файлов проекта..."
-# Основные Python файлы
-for f in bot.py handlers.py database.py config.py models.py utils.py \
-         excel_importer.py excel_template.py kliriki_parser.py \
-         convert_word_to_excel.py legacy_excel_importer.py \
-         add_sample_data.py check_diakons.py import_diakons.py \
-         import_phones_from_kliriki.py offline_import_legacy.py \
-         reset_and_import_legacy.py test_kliriki_read.py \
-         requirements.txt start.sh; do
-    if [ -f "$LOCAL_DIR/$f" ]; then
-        $SCP_CMD "$LOCAL_DIR/$f" "$SERVER:$REMOTE_DIR/$f"
-        echo "  ✅ $f"
+# Шаг 3: Загрузка файлов (без venv, __pycache__, .git, keys и database.db)
+echo "📦 Шаг 3: Загрузка файлов проекта..."
+COPYFILE_DISABLE=1 tar czf - "${FILES[@]}" \
+    | "${SSH[@]}" "tar xzf - -C $REMOTE_DIR --warning=no-unknown-keyword"
+# Сверка контрольных сумм: сервер печатает только несовпадения
+shasum -a 256 "${FILES[@]}" \
+    | "${SSH[@]}" "cd $REMOTE_DIR && sha256sum -c --quiet - && echo '  ✅ Загружено файлов: ${#FILES[@]}, контрольные суммы совпали'"
+echo ""
+
+# Шаг 4: Токен бота
+echo "🔑 Шаг 4: Токен бота..."
+if [ "$SET_TOKEN" = 0 ] && "${SSH[@]}" "sudo -n test -f $DROPIN"; then
+    echo "  ✅ Токен уже настроен ($DROPIN), оставляем как есть"
+else
+    TOKEN="${BOT_TOKEN:-}"
+    if [ -z "$TOKEN" ] && [ -f "$LOCAL_DIR/.env" ]; then
+        TOKEN="$(sed -n 's/^BOT_TOKEN=//p' "$LOCAL_DIR/.env" | tr -d "\"' \r")"
     fi
-done
-
-# Копирование базы данных
-echo "  📊 Копирование базы данных..."
-$SCP_CMD "$LOCAL_DIR/database.db" "$SERVER:$REMOTE_DIR/database.db"
-echo "  ✅ database.db"
-
-# Копирование папки data
-if [ -d "$LOCAL_DIR/data" ]; then
-    echo "  📂 Копирование папки data..."
-    $SCP_CMD -r "$LOCAL_DIR/data/"* "$SERVER:$REMOTE_DIR/data/" 2>/dev/null || true
-    echo "  ✅ data/"
+    [ -n "$TOKEN" ] || { echo "❌ Токен не найден: задайте BOT_TOKEN или BOT_TOKEN=... в .env"; exit 1; }
+    # Токен передаётся через stdin, чтобы не попасть в список процессов
+    printf '%s' "$TOKEN" | "${SSH[@]}" "set -e; T=\$(cat)
+        sudo -n mkdir -p $DROPIN_DIR
+        printf '[Service]\nEnvironment=\"BOT_TOKEN=%s\"\n' \"\$T\" | sudo -n tee $DROPIN >/dev/null
+        sudo -n chmod 600 $DROPIN"
+    echo "  ✅ Токен записан в $DROPIN"
 fi
-
-echo "✅ Файлы скопированы"
 echo ""
 
-# Шаг 4: Настройка Python окружения (БЕЗ dnf — экономим RAM!)
-echo "🐍 Шаг 4: Настройка Python окружения..."
-$SSH_CMD "cd $REMOTE_DIR && python3 -m venv venv && source venv/bin/activate && pip install --upgrade pip"
-echo "✅ venv создан"
+# Шаг 5: Python окружение и зависимости (по одной, чтобы не перегрузить RAM)
+echo "🐍 Шаг 5: Python окружение и зависимости..."
+"${SSH[@]}" "cd $REMOTE_DIR && { [ -d venv ] || python3 -m venv venv; }"
+for pkg in $(grep -vE '^\s*(#|$)' requirements.txt); do
+    "${SSH[@]}" "cd $REMOTE_DIR && venv/bin/pip install -q '$pkg' >> deploy.log 2>&1 \
+        || { echo '❌ $pkg — см. $REMOTE_DIR/deploy.log'; exit 1; }"
+    echo "  ✅ $pkg"
+done
+"${SSH[@]}" "cd $REMOTE_DIR && venv/bin/python3 -c 'import telegram, openpyxl, pandas, docx, config, database, handlers, monastery_importer' && echo '  ✅ Все импорты проходят'"
 echo ""
 
-# Шаг 5: Установка зависимостей (по одной, чтобы не перегрузить RAM)
-echo "📥 Шаг 5: Установка зависимостей..."
-$SSH_CMD "cd $REMOTE_DIR && source venv/bin/activate && pip install 'python-telegram-bot==20.7'"
-echo "  ✅ python-telegram-bot"
-$SSH_CMD "cd $REMOTE_DIR && source venv/bin/activate && pip install 'openpyxl==3.1.2'"
-echo "  ✅ openpyxl"
-$SSH_CMD "cd $REMOTE_DIR && source venv/bin/activate && pip install 'python-docx==1.1.0'"
-echo "  ✅ python-docx"
-# pandas ставим последним — он самый тяжёлый
-$SSH_CMD "cd $REMOTE_DIR && source venv/bin/activate && pip install 'pandas==2.1.4'"
-echo "  ✅ pandas"
-echo "✅ Все зависимости установлены"
-echo ""
-
-# Шаг 6: Тестовый запуск (проверка импортов)
-echo "🧪 Шаг 6: Проверка импортов..."
-$SSH_CMD "cd $REMOTE_DIR && source venv/bin/activate && python3 -c 'import telegram; import openpyxl; import pandas; import docx; print(\"ALL IMPORTS OK\")'"
-echo "✅ Все импорты проходят"
-echo ""
-
-# Шаг 7: Создание systemd service
-echo "⚙️ Шаг 7: Настройка systemd сервиса..."
-$SSH_CMD "sudo tee /etc/systemd/system/telegram-bot.service > /dev/null << 'SERVICEEOF'
+# Шаг 6: systemd сервис
+echo "⚙️ Шаг 6: Настройка systemd сервиса..."
+"${SSH[@]}" "sudo -n tee /etc/systemd/system/telegram-bot.service > /dev/null" << 'SERVICEEOF'
 [Unit]
 Description=Telegram Bot Cancellary OEU OE
 After=network-online.target
@@ -115,33 +132,31 @@ PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
-SERVICEEOF"
-
-echo "✅ Сервис создан"
+SERVICEEOF
+echo "✅ Сервис настроен"
 echo ""
 
-# Шаг 8: Запуск бота
-echo "🤖 Шаг 8: Запуск бота..."
-$SSH_CMD "sudo systemctl daemon-reload && sudo systemctl enable telegram-bot && sudo systemctl start telegram-bot"
-sleep 3
-echo "✅ Бот запущен"
-echo ""
-
-# Шаг 9: Проверка статуса
-echo "📊 Шаг 9: Проверка статуса..."
-$SSH_CMD "sudo systemctl status telegram-bot --no-pager"
-echo ""
-
-# Шаг 10: Последние логи
+# Шаг 7: Перезапуск и проверка
+echo "🤖 Шаг 7: Перезапуск бота..."
+"${SSH[@]}" "sudo -n systemctl daemon-reload && sudo -n systemctl enable -q telegram-bot && sudo -n systemctl restart telegram-bot"
+sleep 12
+STATE="$("${SSH[@]}" "systemctl is-active telegram-bot" || true)"
+echo "📊 Статус: $STATE"
 echo "📋 Последние логи:"
-$SSH_CMD "sudo journalctl -u telegram-bot -n 20 --no-pager"
+"${SSH[@]}" "sudo -n journalctl -u telegram-bot --since '-20s' --no-pager -o cat \
+    | grep -v getUpdates | tail -6 | sed -E 's/bot[0-9]+:[A-Za-z0-9_-]+/bot<TOKEN>/g' | cut -c1-160"
 echo ""
+
+if [ "$STATE" != "active" ]; then
+    echo "❌ Бот не запущен. Подробности: ssh ... 'sudo journalctl -u telegram-bot -n 50'"
+    echo "   Откат: распаковать последнюю копию из /home/opc/backups и перезапустить сервис"
+    exit 1
+fi
 
 echo "🎉 === ДЕПЛОЙ ЗАВЕРШЁН УСПЕШНО ==="
-echo "🤖 Бот должен отвечать в Telegram!"
 echo ""
 echo "Полезные команды для сервера:"
-echo "  Статус:      $SSH_CMD 'sudo systemctl status telegram-bot'"
-echo "  Логи:        $SSH_CMD 'sudo journalctl -u telegram-bot -f'"
-echo "  Перезапуск:  $SSH_CMD 'sudo systemctl restart telegram-bot'"
-echo "  Остановка:   $SSH_CMD 'sudo systemctl stop telegram-bot'"
+echo "  Статус:      ssh -i $SSH_KEY $SERVER 'systemctl is-active telegram-bot'"
+echo "  Логи:        ssh -i $SSH_KEY $SERVER 'sudo journalctl -u telegram-bot -n 20 --no-pager | cut -c1-150'"
+echo "  Перезапуск:  ssh -i $SSH_KEY $SERVER 'sudo systemctl restart telegram-bot'"
+echo "  Остановка:   ssh -i $SSH_KEY $SERVER 'sudo systemctl stop telegram-bot'"
