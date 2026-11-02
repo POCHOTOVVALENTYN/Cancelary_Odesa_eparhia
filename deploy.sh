@@ -139,15 +139,22 @@ echo ""
 # Шаг 7: Перезапуск и проверка
 echo "🤖 Шаг 7: Перезапуск бота..."
 "${SSH[@]}" "sudo -n systemctl daemon-reload && sudo -n systemctl enable -q telegram-bot && sudo -n systemctl restart telegram-bot"
-sleep 12
+# Ждём до 60 с строку «Application started» в журнале именно этого запуска
+# ("active" в systemd значит лишь, что процесс жив, а не что бот подключился)
+STARTED="$("${SSH[@]}" "for i in \$(seq 30); do
+        ID=\$(systemctl show -p InvocationID --value telegram-bot)
+        sudo -n journalctl _SYSTEMD_INVOCATION_ID=\$ID -o cat | grep -q 'Application started' && { echo yes; exit; }
+        sleep 2
+    done; echo no")"
 STATE="$("${SSH[@]}" "systemctl is-active telegram-bot" || true)"
-echo "📊 Статус: $STATE"
-echo "📋 Последние логи:"
-"${SSH[@]}" "sudo -n journalctl -u telegram-bot --since '-20s' --no-pager -o cat \
-    | grep -v getUpdates | tail -6 | sed -E 's/bot[0-9]+:[A-Za-z0-9_-]+/bot<TOKEN>/g' | cut -c1-160"
+echo "📊 Статус: $STATE, подключение к Telegram: $([ "$STARTED" = yes ] && echo есть || echo НЕТ)"
+echo "📋 Логи запуска:"
+"${SSH[@]}" "ID=\$(systemctl show -p InvocationID --value telegram-bot)
+    sudo -n journalctl _SYSTEMD_INVOCATION_ID=\$ID --no-pager -o cat \
+    | grep -v getUpdates | tail -6 | sed -E 's/bot[0-9]+:[A-Za-z0-9_-]+/bot<TOKEN>/g' | cut -c1-110"
 echo ""
 
-if [ "$STATE" != "active" ]; then
+if [ "$STATE" != "active" ] || [ "$STARTED" != yes ]; then
     echo "❌ Бот не запущен. Подробности: ssh ... 'sudo journalctl -u telegram-bot -n 50'"
     echo "   Откат: распаковать последнюю копию из /home/opc/backups и перезапустить сервис"
     exit 1
