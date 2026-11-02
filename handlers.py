@@ -334,6 +334,14 @@ def _monasteries_root_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+_MONASTERY_DATE_LABELS = [
+    ("tonsure_date", "✂️ Постриг"),
+    ("deacon_ordination_date", "✝️ Хиротония в диакона"),
+    ("priest_ordination_date", "⛪ Хиротония в иерея"),
+    ("bishop_ordination_date", "☦️ Хиротония во епископа"),
+]
+
+
 def _monastery_person_line(index: int, p: models.Priest) -> str:
     """Короткая строка о человеке в списке монастыря."""
     if p.is_monastic:
@@ -344,6 +352,13 @@ def _monastery_person_line(index: int, p: models.Priest) -> str:
             line += f", {p.birth_year} г.р."
         if p.obedience:
             line += f"\n    <i>{p.obedience}</i>"
+        # полные даты известны только у архиереев (data/vicar_dates.csv)
+        if p.name_day:
+            line += f"\n    📅 День тезоименитства: {p.name_day}"
+        for field_name, label in _MONASTERY_DATE_LABELS:
+            d = getattr(p, field_name)
+            if d:
+                line += f"\n    {label}: {utils.format_date(d)}"
         return line
     fio = " ".join(part for part in [p.surname, p.name, p.patronymic] if part)
     line = f"{index}. {p.status} {fio}"
