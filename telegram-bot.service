@@ -8,8 +8,11 @@ User=opc
 Group=opc
 WorkingDirectory=/home/opc/telegram-bot
 Environment="PATH=/home/opc/telegram-bot/venv/bin:/usr/local/bin:/usr/bin:/bin"
-# Токен берётся из файла .env (строка BOT_TOKEN=...), права 600, в git не хранится
-EnvironmentFile=/home/opc/telegram-bot/.env
+# Токен в git не хранится. Задаётся drop-in файлом (root, 600):
+#   /etc/systemd/system/telegram-bot.service.d/env.conf
+#   [Service]
+#   Environment="BOT_TOKEN=..."
+# EnvironmentFile из /home не подходит: SELinux не даёт systemd его читать.
 ExecStart=/home/opc/telegram-bot/venv/bin/python3 /home/opc/telegram-bot/bot.py
 Restart=always
 RestartSec=10

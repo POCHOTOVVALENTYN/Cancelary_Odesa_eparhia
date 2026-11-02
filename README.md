@@ -260,8 +260,7 @@ After=network.target
 Type=simple
 User=ваш_пользователь
 WorkingDirectory=/путь/к/Cancellary_Bot
-# Файл с строкой BOT_TOKEN=... (chmod 600, не в git)
-EnvironmentFile=/путь/к/Cancellary_Bot/.env
+# Токен — в drop-in /etc/systemd/system/cancellary-bot.service.d/env.conf (см. ниже)
 ExecStart=/usr/bin/python3 /путь/к/Cancellary_Bot/bot.py
 Restart=always
 
@@ -278,7 +277,14 @@ sudo systemctl start cancellary-bot
 
 ### Деплой через deploy.sh (Oracle Linux)
 
-`deploy.sh` копирует локальный `.env` на сервер в `/home/opc/telegram-bot/.env` (права 600) и прописывает `EnvironmentFile` в systemd-юнит. Если `.env` нет ни локально, ни на сервере, деплой остановится до запуска бота.
+Токен на сервере хранится в systemd drop-in `/etc/systemd/system/telegram-bot.service.d/env.conf` (владелец root, права 600):
+
+```ini
+[Service]
+Environment="BOT_TOKEN=ваш_токен"
+```
+
+`EnvironmentFile` из `/home/opc` не используйте: на Oracle Linux включён SELinux, и systemd не может прочитать такой файл. После правки drop-in: `sudo systemctl daemon-reload && sudo systemctl restart telegram-bot`.
 
 SSH-ключ для деплоя хранится только локально в `keys/` (папка в `.gitignore`); путь можно переопределить: `SSH_KEY=/путь/к/ключу ./deploy.sh`.
 
