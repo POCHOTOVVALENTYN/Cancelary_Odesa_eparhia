@@ -902,7 +902,7 @@ async def show_month_menu_with_prefix(query, prefix: str, back_callback: str, ti
 
 # (поле, подпись даты, «лет …») — постриг и епископская хиротония есть только у архиереев
 _ORDINATION_EVENTS = [
-    ("tonsure_date", "✂️ Постриг в монашество", "в монашестве"),
+    ("tonsure_date", "✂️ Постриг в монашество", "в монашеском постриге"),
     ("deacon_ordination_date", "✝️ Дата хиротонии в диакона", "в диаконском сане"),
     ("priest_ordination_date", "⛪ Дата хиротонии в священника", "в священническом сане"),
     ("bishop_ordination_date", "☦️ Дата хиротонии во епископа", "в архиерейском сане"),
@@ -962,12 +962,16 @@ def _rich_celebration_line(idx: int, p: models.Priest, kind: str, today: date) -
     if kind == "bday":
         birth_line = f"   📅 Дата рождения: {utils.format_date(p.birth_date)}\n"
 
-    # диакон и священник — всегда (как раньше), постриг и епископ — если известны
+    # диакон и священник — всегда (как раньше), постриг и епископ — если известны;
+    # у насельниц хиротоний нет — только постриг
     dates_lines = ""
     years_lines = ""
     for field_name, date_label, years_label in _ORDINATION_EVENTS:
         d = getattr(p, field_name)
-        if not d and field_name in ("tonsure_date", "bishop_ordination_date"):
+        if p.category == "nun":
+            if field_name != "tonsure_date":
+                continue
+        elif not d and field_name in ("tonsure_date", "bishop_ordination_date"):
             continue
         emoji = date_label.split()[0]
         years = utils.years_since(d, today)

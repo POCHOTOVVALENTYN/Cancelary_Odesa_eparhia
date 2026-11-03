@@ -21,6 +21,7 @@
    пересохранить в Word как .docx.
 """
 
+import csv
 import html
 import logging
 import os
@@ -480,6 +481,17 @@ def monastery_keywords(name: str) -> List[str]:
     return [parts[-1][:6]]
 
 
+LINK_EXCLUDE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "monastery_link_exclude.csv")
+
+
+def _load_link_exclusions() -> set:
+    """Духовенство, которое не нужно привязывать к монастырю, хотя монастырь упомянут в месте служения."""
+    if not os.path.exists(LINK_EXCLUDE_PATH):
+        return set()
+    with open(LINK_EXCLUDE_PATH, encoding="utf-8") as f:
+        return {(r["surname"].strip().upper(), r["name"].strip().lower()) for r in csv.DictReader(f)}
+
+
 def link_white_clergy(db: Database, dry_run: bool = False) -> Dict[str, list]:
     """
     Привязывает белое духовенство к монастырям по полю «место служения».
@@ -491,9 +503,12 @@ def link_white_clergy(db: Database, dry_run: bool = False) -> Dict[str, list]:
     monasteries = db.get_monasteries()
     keyed = [(m, monastery_keywords(m["name"])) for m in monasteries]
     report: Dict[str, list] = {"linked": [], "unmatched": [], "ambiguous": []}
+    excluded = _load_link_exclusions()
 
     for priest in db.get_all_priests(category=config.CATEGORY_WHITE_CLERGY):
         if priest.monastery_id:
+            continue
+        if (priest.surname.upper(), priest.name.lower()) in excluded:
             continue
         place = " ".join(priest.service_place.lower().split())
         if not any(w in place for w in _MONASTERY_WORDS):
