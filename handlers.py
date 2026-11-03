@@ -77,7 +77,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Клавиатура с основными действиями (кнопки для пользователя)
     keyboard: List[List[KeyboardButton]] = [
         [KeyboardButton("🔍 Поиск"), KeyboardButton("📋 Список")],
-        [KeyboardButton("🎉 Именинники")],
+        [KeyboardButton("🎉 Именинники"), KeyboardButton("🏛 Монастыри")],
         [KeyboardButton("❓ Помощь")],
     ]
 
@@ -100,9 +100,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📖 <b>Справка по командам бота</b>
 
 <b>Кнопки:</b>
-🔍 Поиск — введите имя или фамилию для поиска священника  
-📋 Список — список всех священников с постраничной навигацией  
-🎉 Именинники — просмотр священников по дате рождения, тезоименитства и хиротонии  
+🔍 Поиск — введите имя, фамилию или монашеское имя
+📋 Список — список белого духовенства с постраничной навигацией
+🎉 Именинники — просмотр священников по дате рождения, тезоименитства и хиротонии
+🏛 Монастыри — насельники, насельницы и духовенство, служащее при монастырях
 ❓ Помощь — это сообщение
     """
     
@@ -128,7 +129,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     query = " ".join(context.args)
-    db = database.Database()
+    db = database.get_db()
     priests = db.search_priests(query)
     
     if not priests:
@@ -147,7 +148,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Если найдено несколько, показываем список
         message = f"🔍 <b>Найдено священников: {len(priests)}</b>\n\n"
         for i, priest in enumerate(priests[:20], 1):  # Ограничиваем 20 результатами
-            message += f"{i}. {priest.name} {priest.surname} - {priest.status}\n"
+            message += f"{i}. {priest.short_title()}\n"
         
         if len(priests) > 20:
             message += f"\n... и ещё {len(priests) - 20} священников"
@@ -164,13 +165,16 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or not utils.is_admin(user.id):
         await _handle_unauthorized_message(update, context)
         return
-    db = database.Database()
+    db = database.get_db()
     page = int(context.args[0]) if context.args and context.args[0].isdigit() else 0
     
     offset = page * config.ITEMS_PER_PAGE
-    priests = db.get_all_priests(limit=config.ITEMS_PER_PAGE, offset=offset)
-    total = db.get_total_count()
-    
+    # Общий список — белое духовенство; насельники смотрятся в разделе «Монастыри»
+    priests = db.get_all_priests(
+        limit=config.ITEMS_PER_PAGE, offset=offset, category=config.CATEGORY_WHITE_CLERGY
+    )
+    total = db.get_total_count(category=config.CATEGORY_WHITE_CLERGY)
+
     if not priests:
         await update.message.reply_text(
             "📋 Список священников пуст."
@@ -226,7 +230,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _handle_unauthorized_message(update, context)
         return
     if not context.args:
-        status_list = "\n".join([f"• {status}" for status in config.PRIEST_STATUSES.values()])
+        status_list = "\n".join([f"• {status}" for status in config.ALL_STATUSES.values()])
         await update.message.reply_text(
             f"📊 <b>Фильтр по статусу</b>\n\n"
             f"Доступные статусы:\n{status_list}\n\n"
@@ -242,11 +246,11 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not normalized_status:
         await update.message.reply_text(
             f"❌ Статус '{status_query}' не найден.\n\n"
-            f"Доступные статусы: {', '.join(config.PRIEST_STATUSES.values())}"
+            f"Доступные статусы: {', '.join(config.ALL_STATUSES.values())}"
         )
         return
     
-    db = database.Database()
+    db = database.get_db()
     priests = db.get_priests_by_status(normalized_status)
     
     if not priests:
@@ -300,6 +304,190 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ==== Раздел «Монастыри» ====
+
+# Ключ в callback_data -> (категория в БД, тип монастыря, заголовок)
+MONASTERY_SECTIONS = {
+    "monk": (config.CATEGORY_MONK, "male", "👨 Насельники монастырей"),
+    "nun": (config.CATEGORY_NUN, "female", "👩 Насельницы монастырей"),
+    "clergy": (config.CATEGORY_WHITE_CLERGY, None, "⛪ Духовенство при монастырях"),
+}
+
+MONASTERY_PAGE_SIZE = 30
+
+MONASTERIES_ROOT_TEXT = (
+    "🏛 <b>Раздел «Монастыри»</b>\n\n"
+    "Выберите категорию:\n"
+    "• 👨 Насельники мужских монастырей\n"
+    "• 👩 Насельницы женских монастырей\n"
+    "• ⛪ Белое духовенство, служащее при монастырях\n\n"
+    "Полная карточка — через 🔍 Поиск по фамилии или монашескому имени."
+)
+
+
+def _monasteries_root_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(title, callback_data=f"mon_cat_{key}")]
+        for key, (_, _, title) in MONASTERY_SECTIONS.items()
+    ]
+    rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+_MONASTERY_DATE_LABELS = [
+    ("tonsure_date", "✂️ Постриг"),
+    ("deacon_ordination_date", "✝️ Хиротония в диакона"),
+    ("priest_ordination_date", "⛪ Хиротония в иерея"),
+    ("bishop_ordination_date", "☦️ Хиротония во епископа"),
+]
+
+
+def _monastery_person_dates(p: models.Priest) -> str:
+    """Даты для поздравлений — только те, что известны."""
+    line = ""
+    if p.name_day:
+        line += f"\n    📅 День тезоименитства: {p.name_day}"
+    for field_name, label in _MONASTERY_DATE_LABELS:
+        d = getattr(p, field_name)
+        if d:
+            line += f"\n    {label}: {utils.format_date(d)}"
+    return line
+
+
+def _monastery_person_line(index: int, p: models.Priest) -> str:
+    """Короткая строка о человеке в списке монастыря."""
+    if p.birth_date:
+        born = f", род. {utils.format_date(p.birth_date)}"
+    elif p.birth_year:
+        born = f", {p.birth_year} г.р."
+    else:
+        born = ""
+    if p.is_monastic:
+        line = f"{index}. {p.short_title()}"
+        if p.is_vicegerent:
+            line += " — наместник"
+        line += born
+        if p.obedience:
+            line += f"\n    <i>{p.obedience}</i>"
+        # у насельников из списков монастырей только годы; полные даты — из data/*_dates.csv
+        return line + _monastery_person_dates(p)
+    fio = " ".join(part for part in [p.surname, p.name, p.patronymic] if part)
+    line = f"{index}. {p.status} {fio}{born}"
+    if p.phone:
+        line += f"\n    📞 {p.phone}"
+    return line + _monastery_person_dates(p)
+
+
+async def handle_monasteries_callback(query, context: ContextTypes.DEFAULT_TYPE, data: str):
+    """
+    callback_data:
+      mon_root                      — выбор категории
+      mon_cat_<key>                 — выбор монастыря в категории
+      mon_list_<key>_<id>_<page>    — список людей (id=0 — все монастыри)
+    """
+    db = database.get_db()
+
+    if data == "mon_root":
+        await query.edit_message_text(
+            MONASTERIES_ROOT_TEXT, parse_mode="HTML", reply_markup=_monasteries_root_keyboard()
+        )
+        return
+
+    if data.startswith("mon_cat_"):
+        key = data[len("mon_cat_"):]
+        if key not in MONASTERY_SECTIONS:
+            return
+        category, gender, title = MONASTERY_SECTIONS[key]
+        monasteries = db.get_monasteries_with_counts(category, gender)
+        if not monasteries:
+            await query.edit_message_text(
+                f"{title}\n\nДанных пока нет. Загрузите списки монастырей: "
+                f"<code>python3 import_monasteries.py папка_со_списками</code>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("⬅️ Назад", callback_data="mon_root")]]
+                ),
+            )
+            return
+
+        total = sum(m["count"] for m in monasteries)
+        rows = [
+            [InlineKeyboardButton(f"{m['name']} ({m['count']})", callback_data=f"mon_list_{key}_{m['id']}_0")]
+            for m in monasteries
+        ]
+        rows.append([InlineKeyboardButton(f"📋 Все ({total})", callback_data=f"mon_list_{key}_0_0")])
+        rows.append([
+            InlineKeyboardButton("⬅️ Назад", callback_data="mon_root"),
+            InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu"),
+        ])
+        await query.edit_message_text(
+            f"<b>{title}</b>\nВсего: {total}\n\nВыберите монастырь:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return
+
+    if data.startswith("mon_list_"):
+        try:
+            key, monastery_id_str, page_str = data[len("mon_list_"):].rsplit("_", 2)
+            monastery_id, page = int(monastery_id_str), int(page_str)
+        except ValueError:
+            return
+        if key not in MONASTERY_SECTIONS:
+            return
+        category, _, title = MONASTERY_SECTIONS[key]
+
+        # категория насельника уже определяется типом монастыря, фильтр по полу не нужен
+        people = db.get_monastery_people(category, monastery_id or None)
+
+        pages = max(1, (len(people) - 1) // MONASTERY_PAGE_SIZE + 1)
+        page = min(max(page, 0), pages - 1)
+        chunk = people[page * MONASTERY_PAGE_SIZE:(page + 1) * MONASTERY_PAGE_SIZE]
+
+        if monastery_id:
+            monastery = db.get_monastery(monastery_id)
+            header = f"<b>{title}</b>\n🏛 {monastery['name'] if monastery else ''}\n"
+        else:
+            header = f"<b>{title}</b> — все монастыри\n"
+        header += f"Всего: {len(people)}"
+        if pages > 1:
+            header += f" · страница {page + 1} из {pages}"
+
+        lines = [header, ""]
+        current_monastery = None
+        for i, (list_monastery, p) in enumerate(chunk, start=page * MONASTERY_PAGE_SIZE + 1):
+            if not monastery_id and list_monastery != current_monastery:
+                current_monastery = list_monastery
+                lines.append(f"\n<b>🏛 {current_monastery}</b>")
+            lines.append(_monastery_person_line(i, p))
+        if not chunk:
+            lines.append("Никого нет.")
+
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("◀️", callback_data=f"mon_list_{key}_{monastery_id}_{page - 1}"))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton("▶️", callback_data=f"mon_list_{key}_{monastery_id}_{page + 1}"))
+        keyboard = [nav] if nav else []
+        keyboard.append([
+            InlineKeyboardButton("⬅️ К монастырям", callback_data=f"mon_cat_{key}"),
+            InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu"),
+        ])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        parts = utils.split_message("\n".join(lines))
+        if len(parts) == 1:
+            await query.edit_message_text(parts[0], parse_mode="HTML", reply_markup=reply_markup)
+        else:
+            await query.edit_message_text(parts[0], parse_mode="HTML")
+            for part in parts[1:-1]:
+                await context.bot.send_message(chat_id=query.message.chat_id, text=part, parse_mode="HTML")
+            await context.bot.send_message(
+                chat_id=query.message.chat_id, text=parts[-1], parse_mode="HTML", reply_markup=reply_markup
+            )
+        return
+
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик callback-запросов от inline-кнопок"""
     query = update.callback_query
@@ -321,10 +509,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Пагинация списка священников
     if data.startswith("list_"):
         page = int(data.split("_")[1])
-        db = database.Database()
+        db = database.get_db()
         offset = page * config.ITEMS_PER_PAGE
-        priests = db.get_all_priests(limit=config.ITEMS_PER_PAGE, offset=offset)
-        total = db.get_total_count()
+        priests = db.get_all_priests(
+            limit=config.ITEMS_PER_PAGE, offset=offset, category=config.CATEGORY_WHITE_CLERGY
+        )
+        total = db.get_total_count(category=config.CATEGORY_WHITE_CLERGY)
 
         header = (
             f"📋 <b>Список священников</b>\n"
@@ -367,11 +557,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         return
 
+    # Раздел «Монастыри»
+    if data.startswith("mon_"):
+        await handle_monasteries_callback(query, context, data)
+        return
+
     # Главное меню (из inline-подменю)
     if data == "main_menu":
         await query.edit_message_text(
             "🏠 Главное меню.\nИспользуйте кнопки внизу экрана: "
-            "🔍 Поиск, 📋 Список, 🎉 Именинники, ❓ Помощь.",
+            "🔍 Поиск, 📋 Список, 🎉 Именинники, 🏛 Монастыри, ❓ Помощь.",
             parse_mode="HTML",
         )
         return
@@ -703,6 +898,99 @@ async def show_month_menu_with_prefix(query, prefix: str, back_callback: str, ti
     )
 
 
+# ==== Даты для «Именинников» ====
+
+# (поле, подпись даты, «лет …») — постриг и епископская хиротония есть только у архиереев
+_ORDINATION_EVENTS = [
+    ("tonsure_date", "✂️ Постриг в монашество", "в монашестве"),
+    ("deacon_ordination_date", "✝️ Дата хиротонии в диакона", "в диаконском сане"),
+    ("priest_ordination_date", "⛪ Дата хиротонии в священника", "в священническом сане"),
+    ("bishop_ordination_date", "☦️ Дата хиротонии во епископа", "в архиерейском сане"),
+]
+
+
+def _celebration_name(p: models.Priest) -> str:
+    fio = " ".join(part for part in [p.surname, p.name, p.patronymic] if part)
+    if p.monastic_name:
+        return f"{p.status} {p.monastic_name} ({fio})"
+    return fio
+
+
+def _celebration_place(p: models.Priest) -> str:
+    return p.service_place or p.monastery_name or "не указано"
+
+
+def _ord_dates(p: models.Priest) -> List[date]:
+    """
+    Даты, по которым человек попадает в «Именинники по дате хиротонии».
+
+    Белое духовенство — как раньше: хиротония в священника (или в диакона).
+    Монашествующие (архиереи) — каждая дата: постриг и все три хиротонии.
+    """
+    if p.is_monastic:
+        return [getattr(p, f) for f, _, _ in _ORDINATION_EVENTS if getattr(p, f)]
+    d = p.priest_ordination_date or p.deacon_ordination_date
+    return [d] if d else []
+
+
+def _has_jubilee(p: models.Priest, kind: str, today: date) -> bool:
+    if kind == "bday":
+        return utils.is_jubilee(utils.calculate_age(p.birth_date, today))
+    if kind == "ord":
+        return any(
+            utils.is_jubilee(utils.years_since(getattr(p, f), today))
+            for f, _, _ in _ORDINATION_EVENTS
+        )
+    return False
+
+
+def _rich_celebration_line(idx: int, p: models.Priest, kind: str, today: date) -> str:
+    """Подробная строка для отчётов по рождению и хиротонии."""
+    age = utils.calculate_age(p.birth_date, today)
+    if age is not None:
+        age_str = f"{age} лет"
+    elif p.birth_year:
+        age_str = f"около {today.year - p.birth_year} лет ({p.birth_year} г.р.)"
+    else:
+        age_str = "возраст не указан"
+
+    jubilee_marks = []
+    if utils.is_jubilee(age):
+        jubilee_marks.append(f"<b>🎂 ЮБИЛЕЙ возраста: {age} лет</b>")
+
+    birth_line = ""
+    if kind == "bday":
+        birth_line = f"   📅 Дата рождения: {utils.format_date(p.birth_date)}\n"
+
+    # диакон и священник — всегда (как раньше), постриг и епископ — если известны
+    dates_lines = ""
+    years_lines = ""
+    for field_name, date_label, years_label in _ORDINATION_EVENTS:
+        d = getattr(p, field_name)
+        if not d and field_name in ("tonsure_date", "bishop_ordination_date"):
+            continue
+        emoji = date_label.split()[0]
+        years = utils.years_since(d, today)
+        if kind == "ord":
+            dates_lines += f"   {date_label}: {utils.format_date(d)}\n"
+        years_lines += f"\n   {emoji} Лет {years_label}: {f'{years} лет' if years is not None else 'нет данных'}"
+        if utils.is_jubilee(years):
+            jubilee_marks.append(f"<b>{emoji} ЮБИЛЕЙ {years_label}: {years} лет</b>")
+
+    line = (
+        f"{idx}. {_celebration_name(p)}\n"
+        f"   Сан: {p.status}\n"
+        f"{birth_line}"
+        f"{dates_lines}"
+        f"   🎂 Возраст: {age_str}\n"
+        f"   📍 Место служения: {_celebration_place(p)}"
+        f"{years_lines}"
+    )
+    if jubilee_marks:
+        line += "\n   🔔 " + " | ".join(jubilee_marks)
+    return line
+
+
 async def send_celebration_days_report(
     query,
     context: ContextTypes.DEFAULT_TYPE,
@@ -714,8 +1002,8 @@ async def send_celebration_days_report(
     target_date = utils.get_target_date(days_ahead)
     target_ddmm = target_date.strftime("%d.%m")
 
-    db = database.Database()
-    priests = db.get_all_priests()
+    db = database.get_db()
+    priests = db.get_celebration_candidates(kind, target_date.month, target_date.day)
 
     def match(p: models.Priest) -> bool:
         if kind == "bday":
@@ -728,28 +1016,13 @@ async def send_celebration_days_report(
         if kind == "name":
             return (p.name_day or "") == target_ddmm
         if kind == "ord":
-            ord_date = p.priest_ordination_date or p.deacon_ordination_date
-            if not ord_date:
-                return False
-            return ord_date.day == target_date.day and ord_date.month == target_date.month
+            return any(d.day == target_date.day and d.month == target_date.month for d in _ord_dates(p))
         return False
 
     matches = [p for p in priests if match(p)]
 
     if jubilee_only:
-        filtered = []
-        today = date.today()
-        for p in matches:
-            if kind == "bday":
-                age = utils.calculate_age(p.birth_date, today)
-                if utils.is_jubilee(age):
-                    filtered.append(p)
-            elif kind == "ord":
-                years_deacon = utils.years_since(p.deacon_ordination_date, today)
-                years_priest = utils.years_since(p.priest_ordination_date, today)
-                if utils.is_jubilee(years_deacon) or utils.is_jubilee(years_priest):
-                    filtered.append(p)
-        matches = filtered
+        matches = [p for p in matches if _has_jubilee(p, kind, date.today())]
 
     # Заголовки по типам
     headers = {
@@ -772,7 +1045,7 @@ async def send_celebration_days_report(
     today = date.today()
 
     for idx, p in enumerate(matches, start=1):
-        fio = " ".join([part for part in [p.surname, p.name, p.patronymic] if part])
+        fio = _celebration_name(p)
 
         # Специализированный формат для тезоименитств (kind == "name")
         if kind == "name":
@@ -791,78 +1064,11 @@ async def send_celebration_days_report(
                 f"{idx}. {fio}\n"
                 f"   Сан: {p.status}\n"
                 f"   📅 День тезоименитства: {name_day_str}\n"
-                f"   📍 Место служения: {p.service_place or 'не указано'}\n"
+                f"   📍 Место служения: {_celebration_place(p)}\n"
                 f"   {angel_text}"
             )
         else:
-            # Универсальный «богатый» формат для рождения и хиротонии
-            age = utils.calculate_age(p.birth_date, today)
-            age_str = f"{age} лет" if age is not None else "возраст не указан"
-            age_jubilee = utils.is_jubilee(age)
-
-            years_deacon = utils.years_since(p.deacon_ordination_date, today)
-            years_priest = utils.years_since(p.priest_ordination_date, today)
-
-            deacon_str = (
-                f"{years_deacon} лет" if years_deacon is not None else "нет данных"
-            )
-            priest_str = (
-                f"{years_priest} лет" if years_priest is not None else "нет данных"
-            )
-
-            jubilee_marks = []
-            if age_jubilee:
-                jubilee_marks.append(f"<b>🎂 ЮБИЛЕЙ возраста: {age} лет</b>")
-            if utils.is_jubilee(years_deacon):
-                jubilee_marks.append(
-                    f"<b>✝️ ЮБИЛЕЙ в диаконском сане: {years_deacon} лет</b>"
-                )
-            if utils.is_jubilee(years_priest):
-                jubilee_marks.append(
-                    f"<b>⛪ ЮБИЛЕЙ в священническом сане: {years_priest} лет</b>"
-                )
-
-            birth_line = ""
-            if kind == "bday":
-                birth_line = f"   📅 Дата рождения: {utils.format_date(p.birth_date)}\n"
-            ordinations_line = ""
-            if kind == "ord":
-                deacon_date_str = utils.format_date(p.deacon_ordination_date)
-                priest_date_str = utils.format_date(p.priest_ordination_date)
-                ordinations_line = (
-                    f"   ✝️ Дата хиротонии в диакона: {deacon_date_str}\n"
-                    f"   ⛪ Дата хиротонии в священника: {priest_date_str}\n"
-                )
-            ordinations_line = ""
-            if kind == "ord":
-                deacon_date_str = utils.format_date(p.deacon_ordination_date)
-                priest_date_str = utils.format_date(p.priest_ordination_date)
-                ordinations_line = (
-                    f"   ✝️ Дата хиротонии в диакона: {deacon_date_str}\n"
-                    f"   ⛪ Дата хиротонии в священника: {priest_date_str}\n"
-                )
-            ordinations_line = ""
-            if kind == "ord":
-                deacon_date_str = utils.format_date(p.deacon_ordination_date)
-                priest_date_str = utils.format_date(p.priest_ordination_date)
-                ordinations_line = (
-                    f"   ✝️ Дата хиротонии в диакона: {deacon_date_str}\n"
-                    f"   ⛪ Дата хиротонии в священника: {priest_date_str}\n"
-                )
-
-            base_line = (
-                f"{idx}. {fio}\n"
-                f"   Сан: {p.status}\n"
-                f"{birth_line}"
-                f"{ordinations_line}"
-                f"   🎂 Возраст: {age_str}\n"
-                f"   📍 Место служения: {p.service_place or 'не указано'}\n"
-                f"   ✝️ Лет в диаконском сане: {deacon_str}\n"
-                f"   ⛪ Лет в священническом сане: {priest_str}"
-            )
-
-            if jubilee_marks:
-                base_line += "\n   🔔 " + " | ".join(jubilee_marks)
+            base_line = _rich_celebration_line(idx, p, kind, today)
 
         lines.append(base_line)
         lines.append("")
@@ -914,8 +1120,8 @@ async def send_celebration_month_report(
     year = today.year
     month_name = month_names[month] if 1 <= month <= 12 else str(month)
 
-    db = database.Database()
-    priests = db.get_all_priests()
+    db = database.get_db()
+    priests = db.get_celebration_candidates(kind, month)
 
     def match(p: models.Priest) -> bool:
         if kind == "bday":
@@ -931,28 +1137,13 @@ async def send_celebration_month_report(
             except Exception:
                 return False
         if kind == "ord":
-            ord_date = p.priest_ordination_date or p.deacon_ordination_date
-            if not ord_date:
-                return False
-            return ord_date.month == month
+            return any(d.month == month for d in _ord_dates(p))
         return False
 
     matches = [p for p in priests if match(p)]
 
     if jubilee_only:
-        filtered = []
-        today = date.today()
-        for p in matches:
-            if kind == "bday":
-                age = utils.calculate_age(p.birth_date, today)
-                if utils.is_jubilee(age):
-                    filtered.append(p)
-            elif kind == "ord":
-                years_deacon = utils.years_since(p.deacon_ordination_date, today)
-                years_priest = utils.years_since(p.priest_ordination_date, today)
-                if utils.is_jubilee(years_deacon) or utils.is_jubilee(years_priest):
-                    filtered.append(p)
-        matches = filtered
+        matches = [p for p in matches if _has_jubilee(p, kind, date.today())]
 
     headers = {
         "bday": "🎂 <b>Именинники по дате рождения за {month} {year} года</b>\n\n",
@@ -973,7 +1164,7 @@ async def send_celebration_month_report(
     lines = [header]
 
     for idx, p in enumerate(matches, start=1):
-        fio = " ".join([part for part in [p.surname, p.name, p.patronymic] if part])
+        fio = _celebration_name(p)
 
         if kind == "name":
             # Специализированный формат: только день тезоименитства и место служения
@@ -982,61 +1173,10 @@ async def send_celebration_month_report(
                 f"{idx}. {fio}\n"
                 f"   Сан: {p.status}\n"
                 f"   📅 День тезоименитства: {name_day_str}\n"
-                f"   📍 Место служения: {p.service_place or 'не указано'}"
+                f"   📍 Место служения: {_celebration_place(p)}"
             )
         else:
-            # Универсальный «богатый» формат для рождения и хиротонии
-            age = utils.calculate_age(p.birth_date, today)
-            age_str = f"{age} лет" if age is not None else "возраст не указан"
-            age_jubilee = utils.is_jubilee(age)
-
-            years_deacon = utils.years_since(p.deacon_ordination_date, today)
-            years_priest = utils.years_since(p.priest_ordination_date, today)
-
-            deacon_str = (
-                f"{years_deacon} лет" if years_deacon is not None else "нет данных"
-            )
-            priest_str = (
-                f"{years_priest} лет" if years_priest is not None else "нет данных"
-            )
-
-            jubilee_marks = []
-            if age_jubilee:
-                jubilee_marks.append(f"<b>🎂 ЮБИЛЕЙ возраста: {age} лет</b>")
-            if utils.is_jubilee(years_deacon):
-                jubilee_marks.append(
-                    f"<b>✝️ ЮБИЛЕЙ в диаконском сане: {years_deacon} лет</b>"
-                )
-            if utils.is_jubilee(years_priest):
-                jubilee_marks.append(
-                    f"<b>⛪ ЮБИЛЕЙ в священническом сане: {years_priest} лет</b>"
-                )
-
-            birth_line = ""
-            if kind == "bday":
-                birth_line = f"   📅 Дата рождения: {utils.format_date(p.birth_date)}\n"
-            ordinations_line = ""
-            if kind == "ord":
-                deacon_date_str = utils.format_date(p.deacon_ordination_date)
-                priest_date_str = utils.format_date(p.priest_ordination_date)
-                ordinations_line = (
-                    f"   ✝️ Дата хиротонии в диакона: {deacon_date_str}\n"
-                    f"   ⛪ Дата хиротонии в священника: {priest_date_str}\n"
-                )
-
-            base_line = (
-                f"{idx}. {fio}\n"
-                f"   Сан: {p.status}\n"
-                f"{birth_line}"
-                f"{ordinations_line}"
-                f"   🎂 Возраст: {age_str}\n"
-                f"   📍 Место служения: {p.service_place or 'не указано'}\n"
-                f"   ✝️ Лет в диаконском сане: {deacon_str}\n"
-                f"   ⛪ Лет в священническом сане: {priest_str}"
-            )
-
-            if jubilee_marks:
-                base_line += "\n   🔔 " + " | ".join(jubilee_marks)
+            base_line = _rich_celebration_line(idx, p, kind, today)
 
         lines.append(base_line)
         lines.append("")
@@ -1065,7 +1205,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = update.effective_user
     
-    logging.getLogger(__name__).info(f"DEBUG: Входящее сообщение от {user.id if user else 'Unknown'}: {text[:50]}")
+    logging.getLogger(__name__).debug(f"Входящее сообщение от {user.id if user else 'Unknown'}: {text[:50]}")
     
     # Если сообщение начинается с команды, игнорируем (команды обрабатываются отдельно)
     if text.startswith("/"):
@@ -1120,8 +1260,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await help_command(update, context)
         return
 
+    if text == "🏛 Монастыри":
+        await update.message.reply_text(
+            MONASTERIES_ROOT_TEXT,
+            parse_mode="HTML",
+            reply_markup=_monasteries_root_keyboard(),
+        )
+        return
+
     # Простой поиск по любому другому тексту
-    db = database.Database()
+    db = database.get_db()
     priests = db.search_priests(text)
     
     if not priests:
@@ -1139,7 +1287,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         message = f"🔍 <b>Найдено: {len(priests)}</b>\n\n"
         for i, priest in enumerate(priests[:10], 1):
-            message += f"{i}. {priest.name} {priest.surname} - {priest.status}\n"
+            message += f"{i}. {priest.short_title()}\n"
         
         if len(priests) > 10:
             message += f"\n... и ещё {len(priests) - 10} результатов"

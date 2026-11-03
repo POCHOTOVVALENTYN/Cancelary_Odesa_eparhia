@@ -18,6 +18,8 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+# httpx пишет в INFO каждый опрос Telegram — это ~300 строк в час в журнале
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -44,13 +46,13 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.message_handler))
     
     # Инициализация базы данных
-    from database import Database
-    db = Database()
+    import database
+    database.get_db()
     logger.info("База данных инициализирована")
-    
-    # Запуск бота
+
+    # Запуск бота: боту нужны только сообщения и нажатия inline-кнопок
     logger.info("Бот запущен и готов к работе!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
 
 
 if __name__ == "__main__":

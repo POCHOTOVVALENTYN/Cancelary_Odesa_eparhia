@@ -1,0 +1,3 @@
+# Зависимости для сервера: только то, что нужно боту и CSV-скриптам дат.
+# Импорт из Excel/Word (pandas, openpyxl, python-docx) выполняется на Mac — см. requirements.txt
+python-telegram-bot==20.7

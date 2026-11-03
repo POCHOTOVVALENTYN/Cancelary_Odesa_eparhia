@@ -41,12 +41,19 @@ def is_admin(user_id: int) -> bool:
 
 
 def validate_status(status: str) -> Optional[str]:
-    """Валидация и нормализация статуса священника"""
-    status_lower = status.lower().strip()
+    """Валидация и нормализация сана.
 
-    for key, value in config.PRIEST_STATUSES.items():
-        if key in status_lower:
-            return value
+    Сравнение точное (после приведения к нижнему регистру и удаления точек),
+    иначе «Протодиакон», «Иеродиакон» и «Архидиакон» совпадали бы с «диакон».
+    """
+    if not status:
+        return None
+    key = " ".join(status.lower().replace(".", " ").split())
+
+    if key in config.ALL_STATUSES:
+        return config.ALL_STATUSES[key]
+    if key in config.STATUS_ABBREVIATIONS:
+        return config.STATUS_ABBREVIATIONS[key]
 
     return None
 
